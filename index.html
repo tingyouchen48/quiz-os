@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作業系統題庫筆記</title>
+  <style>
+    :root { --bg: #f8fafc; --card: #ffffff; --primary: #2563eb; --text: #0f172a; --border: #e2e8f0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 20px; color: var(--primary); }
+    .card { background: var(--card); padding: 20px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    textarea { width: 100%; height: 140px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+    .btn-group { margin-top: 10px; display: flex; gap: 10px; }
+    button { background: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+    button:hover { opacity: 0.9; }
+    button.secondary { background: #64748b; }
+    button.danger { background: #ef4444; }
+    input[type="text"], select { padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+    .filter-row { display: flex; gap: 10px; margin-bottom: 15px; }
+    .qa-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .qa-item:last-child { border-bottom: none; }
+    .q-text { font-weight: 600; margin-bottom: 8px; line-height: 1.5; font-size: 15px; }
+    .a-text { color: #15803d; font-weight: 600; background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px 14px; border-radius: 6px; display: block; margin-top: 6px; line-height: 1.6; }
+    .badge { display: inline-block; background: #dbeafe; color: #1e40af; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-bottom: 6px; }
+    .stats { font-size: 0.875rem; color: #64748b; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📚 作業系統題庫筆記</h1>
+
+    <div class="card">
+      <h3>📥 貼上修練結束頁面文字</h3>
+      <div style="margin-bottom: 10px;">
+        <label for="chapterInput" style="font-size: 14px; font-weight: 600; color: #475569;">章節 / 單元名稱（貼文內含自動抓取，亦可手動輸入）：</label>
+        <input type="text" id="chapterInput" placeholder="例如：2術法演場(練氣前期) 或 第1章" style="width: 100%; margin-top: 5px;">
+      </div>
+      <textarea id="rawInput" placeholder="直接將測驗結束頁面的全文 (Ctrl+A -> Ctrl+C) 貼上到這裡..."></textarea>
+      <div class="btn-group">
+        <button onclick="importText()">解析並新增題庫</button>
+        <button class="secondary" onclick="exportData()">匯出 JSON</button>
+        <button class="danger" onclick="clearData()">清空所有題庫</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="filter-row">
+        <input type="text" id="searchInput" placeholder="搜尋題目或答案關鍵字..." oninput="render()" style="flex: 2;">
+        <select id="chapterSelect" onchange="render()" style="flex: 1;">
+          <option value="ALL">所有章節</option>
+        </select>
+      </div>
+      <div class="stats" id="stats">目前收錄：0 題</div>
+      <div id="qaList"></div>
+    </div>
+  </div>
+
+  <script>
+    let db = JSON.parse(localStorage.getItem('os_alg_db') || '[]');
+
+    function saveDB() {
+      localStorage.setItem('os_alg_db', JSON.stringify(db));
+      render();
+    }
+
+    function importText() {
+      const raw = document.getElementById('rawInput').value;
+      if (!raw.trim()) return alert('請先貼上內容！');
+
+      let detectedChapter = '';
+      const chapterMatch = raw.match(/本次在「(.*?)」的修練已結束/);
+      if (chapterMatch && chapterMatch[1]) {
+        detectedChapter = chapterMatch[1].trim();
+      } else {
+        detectedChapter = document.getElementById('chapterInput').value.trim();
+      }
+      if (!detectedChapter) detectedChapter = '未分類章節';
+
+      const rawBlocks = raw.split(/(?:\*?題目：\*?)/);
+      let count = 0;
+
+      rawBlocks.forEach(block => {
+        if (!block.trim()) return;
+
+        const lines = block.split('\n').map(l => l.trim()).filter(l => l !== '');
+        
+        let qParts = [];
+        let aParts = [];
+        let state = 'q';
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.match(/^\*?你的答案：\*?/)) {
+            state = 'your';
+          } else if (line.match(/^\*?正確答案：\*?/)) {
+            state = 'correct';
+            const inlineVal = line.replace(/^\*?正確答案：\*?/, '').trim();
+            if (inlineVal) aParts.push(inlineVal);
+          } else if (line.match(/^\*?得分：\*?/)) {
+            state = 'score';
+          } else {
+            if (state === 'q') {
+              qParts.push(line);
+            } else if (state === 'correct') {
+              aParts.push(line);
+            }
+          }
+        }
+
+        const question = qParts.join(' ').trim();
+        const answer = aParts.join('[NEXT_OPT]').trim();
+
+        if (question && answer) {
+          const existingIdx = db.findIndex(item => item.q === question);
+          if (existingIdx !== -1) {
+            // 已存在則更新為修復後的答案格式
+            db[existingIdx].a = answer;
+            db[existingIdx].chapter = detectedChapter;
+          } else {
+            db.push({ q: question, a: answer, chapter: detectedChapter });
+            count++;
+          }
+        }
+      });
+
+      document.getElementById('rawInput').value = '';
+      document.getElementById('chapterInput').value = '';
+      saveDB();
+      alert(`更新完成！新增 ${count} 題，並修正已收錄題目的公式排版。`);
+    }
+
+    function updateChapterDropdown() {
+      const chapterSelect = document.getElementById('chapterSelect');
+      const currentVal = chapterSelect.value;
+      
+      const chapters = Array.from(new Set(db.map(item => item.chapter || '未分類章節')));
+      
+      chapterSelect.innerHTML = '<option value="ALL">所有章節</option>' + 
+        chapters.map(ch => `<option value="${escapeHtml(ch)}">${escapeHtml(ch)}</option>`).join('');
+      
+      if (chapters.includes(currentVal)) {
+        chapterSelect.value = currentVal;
+      } else {
+        chapterSelect.value = 'ALL';
+      }
+    }
+
+    function formatAnswer(ans) {
+      if (!ans) return '';
+      let parts = [];
+      if (ans.includes('[NEXT_OPT]')) {
+        parts = ans.split('[NEXT_OPT]').filter(p => p.trim() !== '');
+      } else if (ans.includes(' / ')) {
+        parts = ans.split(' / ').filter(p => p.trim() !== '');
+      } else {
+        parts = [ans];
+      }
+
+      if (parts.length > 1) {
+        return parts.map(p => `• ${escapeHtml(p)}`).join('<br>');
+      }
+      return escapeHtml(ans);
+    }
+
+    function render() {
+      updateChapterDropdown();
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const selectedChapter = document.getElementById('chapterSelect').value;
+      const listEl = document.getElementById('qaList');
+
+      const filtered = db.filter(item => {
+        const ch = item.chapter || '未分類章節';
+        const matchesChapter = (selectedChapter === 'ALL' || ch === selectedChapter);
+        const matchesQuery = item.q.toLowerCase().includes(query) || item.a.toLowerCase().includes(query);
+        return matchesChapter && matchesQuery;
+      });
+
+      document.getElementById('stats').innerText = `目前收錄：${db.length} 題 | 篩選顯示：${filtered.length} 題`;
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 20px;">尚無符合題目</div>';
+        return;
+      }
+
+      listEl.innerHTML = filtered.map((item, i) => `
+        <div class="qa-item">
+          <div><span class="badge">📖 ${escapeHtml(item.chapter || '未分類章節')}</span></div>
+          <div class="q-text">${i + 1}. ${escapeHtml(item.q)}</div>
+          <div class="a-text">
+            <div style="font-size: 13px; color: #166534; margin-bottom: 4px;">正確答案：</div>
+            ${formatAnswer(item.a)}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function exportData() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db, null, 2));
+      const anchor = document.createElement('a');
+      anchor.setAttribute("href", dataStr);
+      anchor.setAttribute("download", "quiz_database.json");
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+
+    function clearData() {
+      if (confirm('確定要清空所有已儲存的題庫嗎？')) {
+        db = [];
+        saveDB();
+      }
+    }
+
+    render();
+  </script>
+</body>
+</html>
